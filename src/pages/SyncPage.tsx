@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCampaign } from "../context/CampaignContext";
-import { cartLogoSrc, SUPPORTED_CARTS, type CartSlug } from "../data/cartLogos";
+import { CartLogoMark } from "../components/CartLogoMark";
+import { SUPPORTED_CARTS, type CartSlug } from "../data/cartLogos";
 import type { CartPayload } from "../types/cart";
 
 export function SyncPage() {
@@ -43,7 +44,7 @@ export function SyncPage() {
   };
 
   return (
-    <div className="app-main">
+    <div className="app-main wizard-page">
       <h1 className="page-title">Sync your cart</h1>
       <p className="page-lead">Hook up the store. We’ll take it from there.</p>
       <div className="card stack">
@@ -57,10 +58,10 @@ export function SyncPage() {
                   className={`cart-pick__btn${selected ? " selected" : ""}`}
                   role="option"
                   aria-selected={selected}
+                  aria-label={item.name}
                   onClick={() => setCart(item.slug)}
                 >
-                  <img src={cartLogoSrc(item.file)} alt="" width={24} height={24} />
-                  <span>{item.name}</span>
+                  <CartLogoMark file={item.file} name={item.name} className="cart-pick__logo" />
                 </button>
               </li>
             );

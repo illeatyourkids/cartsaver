@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { ThanksLogo } from "./ThanksLogo";
 
 const STEPS = [
   { key: "sync", label: "Sync", to: "/campaign/sync" },
@@ -20,12 +21,9 @@ export function WizardChrome({ pathname }: { pathname: string }) {
   return (
     <header className="wizard-chrome">
       <div className="wizard-chrome-inner">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <Link to="/" className="brand-mark">
-            Abandoned Cart Wizard
-          </Link>
-          <p className="wizard-tagline">Bring them back with a postcard they can hold.</p>
-        </div>
+        <Link to="/" className="brand-mark" aria-label="thanks.io">
+          <ThanksLogo />
+        </Link>
         {current ? (
           <nav className="stepper" aria-label="Campaign steps">
             {STEPS.map((step, index) => {

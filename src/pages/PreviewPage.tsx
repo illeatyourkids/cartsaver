@@ -95,7 +95,7 @@ export function PreviewPage() {
   if (!payload) return null;
 
   return (
-    <div className="app-main wide preview-page">
+    <div className="app-main wide preview-page wizard-page">
       <h1 className="page-title">Preview</h1>
       <p className="page-lead">Front and back, with products from the shop.</p>
       {busy && !view ? <p className="muted">Building preview…</p> : null}

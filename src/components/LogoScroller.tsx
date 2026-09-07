@@ -1,4 +1,5 @@
-import { cartLogoSrc, SUPPORTED_CARTS } from "../data/cartLogos";
+import { SUPPORTED_CARTS } from "../data/cartLogos";
+import { CartLogoMark } from "./CartLogoMark";
 
 export function LogoScroller() {
   return (
@@ -11,10 +12,7 @@ export function LogoScroller() {
             aria-hidden={copy === 1}
           >
             {SUPPORTED_CARTS.map((cart) => (
-              <span key={`${copy}-${cart.file}`} className="logo-scroller__item">
-                <img src={cartLogoSrc(cart.file)} alt="" />
-                <span>{cart.name}</span>
-              </span>
+              <CartLogoMark key={`${copy}-${cart.file}`} file={cart.file} name={cart.name} />
             ))}
           </div>
         ))}

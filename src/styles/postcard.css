@@ -462,9 +462,5 @@ body:has(.print-postcard) {
 }
 
 .landing-mockup .postcard-shell__stage {
-  box-shadow: 0 18px 48px rgba(28, 26, 34, 0.16), 0 2px 8px rgba(28, 26, 34, 0.06);
-}
-
-.landing-mockup__card.is-on-top .postcard-shell__stage {
-  box-shadow: 0 28px 64px rgba(28, 26, 34, 0.22), 0 6px 16px rgba(28, 26, 34, 0.08);
+  box-shadow: 0 12px 32px rgba(23, 18, 31, 0.12), 0 2px 6px rgba(23, 18, 31, 0.06);
 }

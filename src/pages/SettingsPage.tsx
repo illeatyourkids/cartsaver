@@ -29,7 +29,7 @@ export function SettingsPage() {
   if (!payload) return null;
 
   return (
-    <div className="app-main">
+    <div className="app-main wizard-page">
       <h1 className="page-title">Settings</h1>
       <p className="page-lead">The offer they see, and which leftover carts get a card.</p>
       <form className="card stack" onSubmit={onSubmit}>

@@ -1,15 +1,15 @@
 export const SUPPORTED_CARTS = [
-  { name: "Shopify", file: "shopify.svg", slug: "shopify" },
-  { name: "WooCommerce", file: "woocommerce.svg", slug: "woocommerce" },
-  { name: "Magento", file: "magento.svg", slug: "magento" },
-  { name: "PrestaShop", file: "prestashop.svg", slug: "prestashop" },
-  { name: "Shopware", file: "shopware.svg", slug: "shopware" },
-  { name: "OpenCart", file: "opencart.svg", slug: "opencart" },
-  { name: "CS-Cart", file: "cscart.svg", slug: "cscart" },
-  { name: "X-Cart", file: "xcart.svg", slug: "xcart" },
-  { name: "Zen Cart", file: "zencart.svg", slug: "zencart" },
-  { name: "Salesforce Commerce Cloud", file: "salesforce.svg", slug: "salesforce" },
-  { name: "osCommerce", file: "oscommerce.svg", slug: "oscommerce" }
+  { name: "Shopify", file: "shopify.png", slug: "shopify" },
+  { name: "WooCommerce", file: "woocommerce.png", slug: "woocommerce" },
+  { name: "Magento", file: "magento.png", slug: "magento" },
+  { name: "PrestaShop", file: "prestashop.png", slug: "prestashop" },
+  { name: "Shopware", file: "shopware.png", slug: "shopware" },
+  { name: "OpenCart", file: "opencart.png", slug: "opencart" },
+  { name: "CS-Cart", file: "cscart.png", slug: "cscart" },
+  { name: "X-Cart", file: "xcart.png", slug: "xcart" },
+  { name: "Zen Cart", file: "zencart.png", slug: "zencart" },
+  { name: "Salesforce Commerce Cloud", file: "salesforce.png", slug: "salesforce" },
+  { name: "osCommerce", file: "oscommerce.png", slug: "oscommerce" }
 ] as const;
 
 export type CartSlug = (typeof SUPPORTED_CARTS)[number]["slug"];
