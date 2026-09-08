@@ -42,7 +42,7 @@ export function CartBack({
       <section className="cart-back__strip">
         {items.map((item, i) => (
           <div key={`${item.name}-${i}`} className="cart-thumb cart-thumb--wide">
-            {item.imageUrl ? <img src={item.imageUrl} alt="" /> : null}
+            {item.imageUrl ? <img src={item.imageUrl} alt="" className="cart-thumb__img" /> : null}
           </div>
         ))}
       </section>

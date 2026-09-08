@@ -1,9 +1,10 @@
-import { Link } from "react-router-dom";
+import { useState, type MouseEvent } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { LogoScroller } from "../components/LogoScroller";
-import { ThanksLogo } from "../components/ThanksLogo";
 import { SAMPLE_POSTCARD } from "../data/samplePostcard";
 import { CartBack } from "../templates/CartBack";
 import { CartFront } from "../templates/CartFront";
+import { getThanksToken, readThanksTokenFromSearch, withThanksToken } from "../lib/thanksToken";
 
 const FEATURES = [
   "Target only the carts worth chasing",
@@ -23,18 +24,22 @@ const FLOW = [
 ];
 
 export function LandingPage() {
+  const location = useLocation();
+  const token = readThanksTokenFromSearch(location.search) || getThanksToken();
+  const setupHref = withThanksToken("/campaign/sync", token);
+  const [hover, setHover] = useState<"front" | "back" | null>(null);
+  const raised = hover ?? "front";
+
+  function raiseFromPointer(event: MouseEvent<HTMLDivElement>) {
+    const box = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - box.left) / box.width;
+    const y = (event.clientY - box.top) / box.height;
+    setHover(x > 0.42 && y > 0.28 ? "back" : "front");
+  }
+
   return (
     <div className="landing-shell">
       <div className="app-main landing-page">
-        <a
-          className="landing-brand"
-          href="https://www.thanks.io"
-          target="_blank"
-          rel="noreferrer"
-          aria-label="thanks.io"
-        >
-          <ThanksLogo />
-        </a>
         <section className="landing-hero">
           <div className="landing-hero-copy">
             <p className="landing-rating" aria-label="Google rating 4.8">
@@ -67,21 +72,30 @@ export function LandingPage() {
             <h1 className="page-title">Turn Abandoned Carts Into Revenue</h1>
             <p className="page-lead">
               Get 5–10X ROI with hyper-targeted oversized postcards that bring shoppers straight back
-              to their cart—with their discount already applied. When someone leaves items behind, we
+              to their cart, with their discount already applied. When someone leaves items behind, we
               match their email to a mailing address at industry-leading accuracy, then mail a 6×11
               card with those products, their offer, and a QR code that opens the exact cart, ready to
               check out.
             </p>
-            <Link className="btn btn-primary landing-cta" to="/campaign/sync">
-              Easy, 5 Min Setup
+            <Link className="btn btn-primary landing-cta" to={setupHref}>
+              5-Min Setup. 5X ROI.
             </Link>
             <p className="landing-cta-note">Connect your store and launch in minutes.</p>
           </div>
-          <div className="landing-mockup" aria-label="Sample Brooklinen abandoned cart postcard">
-            <div className="landing-mockup__card landing-mockup__card--back">
+          <div
+            className="landing-mockup"
+            aria-label="Sample Brooklinen abandoned cart postcard. Hover to see front and back"
+            onMouseMove={raiseFromPointer}
+            onMouseLeave={() => setHover(null)}
+          >
+            <div
+              className={`landing-mockup__card landing-mockup__card--back${raised === "back" ? " is-lifted" : ""}`}
+            >
               <CartBack view={SAMPLE_POSTCARD} showLabel={false} layout="sample" />
             </div>
-            <div className="landing-mockup__card landing-mockup__card--front">
+            <div
+              className={`landing-mockup__card landing-mockup__card--front${raised === "front" ? " is-lifted" : ""}`}
+            >
               <CartFront view={SAMPLE_POSTCARD} showLabel={false} />
             </div>
           </div>
@@ -125,7 +139,7 @@ export function LandingPage() {
           <h2>Your best prospects already told you exactly what they want.</h2>
           <p>Put it back in front of them.</p>
           <Link className="btn btn-primary landing-cta" to="/campaign/sync">
-            Easy, 5 Min Setup
+            5-Min Setup. 5X ROI.
           </Link>
         </section>
       </div>

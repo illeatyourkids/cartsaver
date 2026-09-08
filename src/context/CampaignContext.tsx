@@ -24,12 +24,16 @@ type SavedUrls = {
 
 type CampaignState = {
   storeUrl: string;
+  storeName: string;
   storeKey: string | null;
+  cartSlug: string;
+  cartId: string;
   offer: OfferFields;
   payload: CartPayload | null;
   cart: CartRecord | null;
   urls: SavedUrls | null;
   setStoreUrl: (v: string) => void;
+  setStoreMeta: (meta: { storeUrl: string; storeName: string; cartSlug: string; cartId: string; storeKey: string | null }) => void;
   setOffer: (patch: Partial<OfferFields>) => void;
   setPayload: (p: CartPayload, storeKey?: string | null) => void;
   setSaved: (cart: CartRecord, urls: SavedUrls) => void;
@@ -40,7 +44,10 @@ const Ctx = createContext<CampaignState | null>(null);
 
 export function CampaignProvider({ children }: { children: ReactNode }) {
   const [storeUrl, setStoreUrl] = useState("");
+  const [storeName, setStoreName] = useState("");
   const [storeKey, setStoreKey] = useState<string | null>(null);
+  const [cartSlug, setCartSlug] = useState("");
+  const [cartId, setCartId] = useState("");
   const [offer, setOfferState] = useState<OfferFields>(DEFAULT_OFFER);
   const [payload, setPayloadState] = useState<CartPayload | null>(null);
   const [cart, setCart] = useState<CartRecord | null>(null);
@@ -51,6 +58,17 @@ export function CampaignProvider({ children }: { children: ReactNode }) {
     setCart(null);
     setUrls(null);
   }, []);
+
+  const setStoreMeta = useCallback(
+    (meta: { storeUrl: string; storeName: string; cartSlug: string; cartId: string; storeKey: string | null }) => {
+      setStoreUrl(meta.storeUrl);
+      setStoreName(meta.storeName);
+      setCartSlug(meta.cartSlug);
+      setCartId(meta.cartId);
+      setStoreKey(meta.storeKey);
+    },
+    []
+  );
 
   const setPayload = useCallback((p: CartPayload, key: string | null = null) => {
     setPayloadState(p);
@@ -72,18 +90,22 @@ export function CampaignProvider({ children }: { children: ReactNode }) {
   const value = useMemo<CampaignState>(
     () => ({
       storeUrl,
+      storeName,
       storeKey,
+      cartSlug,
+      cartId,
       offer,
       payload,
       cart,
       urls,
       setStoreUrl,
+      setStoreMeta,
       setOffer,
       setPayload,
       setSaved,
       clearSaved
     }),
-    [storeUrl, storeKey, offer, payload, cart, urls, setOffer, setPayload, setSaved, clearSaved]
+    [storeUrl, storeName, storeKey, cartSlug, cartId, offer, payload, cart, urls, setOffer, setPayload, setSaved, clearSaved, setStoreMeta]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

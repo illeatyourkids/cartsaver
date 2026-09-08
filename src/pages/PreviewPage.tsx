@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useCampaign } from "../context/CampaignContext";
 import { CartBack } from "../templates/CartBack";
 import { CartFront } from "../templates/CartFront";
 import type { CartRecord, PostcardView } from "../types/cart";
+import { getThanksToken, readThanksTokenFromSearch, withThanksToken } from "../lib/thanksToken";
 
 export function PreviewPage() {
   const navigate = useNavigate();
-  const { offer, payload, storeKey, cart, urls, setSaved } = useCampaign();
+  const location = useLocation();
+  const { offer, payload, storeKey, storeUrl, storeName, cartSlug, cartId, cart, urls, setSaved } = useCampaign();
   const [view, setView] = useState<PostcardView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -77,14 +79,29 @@ export function PreviewPage() {
     setLaunching(true);
     setError(null);
     try {
+      const thanksToken =
+        offer.thanksToken ||
+        readThanksTokenFromSearch(location.search) ||
+        getThanksToken() ||
+        undefined;
       const res = await fetch("/api/launch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cartid: cart.id })
+        body: JSON.stringify({
+          cartid: cart.id,
+          thanksToken,
+          storeUrl,
+          storeName,
+          cartSlug,
+          cartId
+        })
       });
-      const data = (await res.json()) as { live?: boolean; error?: string };
+      const data = (await res.json()) as { live?: boolean; accountId?: string; error?: string };
       if (!res.ok || !data.live) throw new Error(data.error || "Could not launch");
       setLive(true);
+      if (thanksToken) {
+        navigate(withThanksToken("/admin", thanksToken), { replace: true });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not launch");
     } finally {
@@ -111,7 +128,9 @@ export function PreviewPage() {
           Back
         </Link>
         {live ? (
-          <p className="preview-live">Your campaign is live.</p>
+          <Link className="btn btn-primary" to={withThanksToken("/admin")}>
+            Open admin
+          </Link>
         ) : (
           <button
             className="btn btn-primary"

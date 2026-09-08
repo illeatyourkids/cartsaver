@@ -1,104 +1,279 @@
-import { DEFAULT_OFFER, FIXTURE_PAYLOAD } from "./fixture.ts";
-import { shouldMailCart } from "./cartsave.ts";
 import type { CartItem, CartPayload } from "../src/types/cart.ts";
-
-const API = "https://api.api2cart.com/v1.1";
-
-type RawProduct = {
-  product_id?: string;
-  name?: string;
-  price?: number;
-  quantity?: number;
-  total_price?: number;
-  discount_amount?: number;
-};
-
-type RawOrder = {
-  id?: string;
-  basket_id?: string;
-  basket_url?: string;
-  customer?: { first_name?: string; last_name?: string; email?: string; id?: string };
-  totals?: { total?: number; subtotal?: number; shipping?: number; tax?: number; discount?: number };
-  order_products?: RawProduct[];
-};
+import { cartBySlug, type CartSlug } from "../src/data/cartLogos.ts";
+import { A2CError, a2cAccount, a2cStore, isA2CConfigured } from "./a2cClient.ts";
+import {
+  platformForCartId,
+  platformForSlug,
+  slugForCartId,
+  sortOrdersNewestFirst,
+  type PlatformDef,
+  type RawAbandonedOrder
+} from "./platforms.ts";
+import { createAuthorizeUrl, normalizeStoreUrl, storeHost } from "./storeOAuth.ts";
 
 type AccountCart = {
+  id?: string;
   store_key?: string;
   cart_id?: string;
   url?: string;
   store_url?: string;
   store_name?: string;
+  custom_label?: string | null;
 };
 
-function apiKey() {
-  return process.env.API2CART_API_KEY?.trim() || "";
+export type ConnectedStore = {
+  storeKey: string;
+  cartId: string;
+  slug: CartSlug | null;
+  url: string;
+  name: string;
+  label: string;
+};
+
+export type StoreCartPull = {
+  source: "api2cart" | "none";
+  storeKey: string | null;
+  carts: CartPayload[];
+  error?: string;
+  oauthUrl?: string;
+};
+
+export type AbandonedCartCandidate = {
+  orderId: string;
+  abandonedAt: string;
+  payload: CartPayload;
+};
+
+function money(n: number) {
+  return Math.round(n * 100) / 100;
 }
 
-function hostLabel(url: string) {
+function storeUrlDisplay(url: string) {
   try {
-    return new URL(url.includes("://") ? url : `https://${url}`).hostname.replace(/^www\./, "");
+    const parsed = new URL(url.includes("://") ? url : `https://${url}`);
+    const host = parsed.hostname.replace(/^www\./, "");
+    const path = parsed.pathname.replace(/\/$/, "");
+    return path && path !== "/" ? `${host}${path}` : host;
   } catch {
     return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
   }
 }
 
-function cartSlugMatches(cartId: string, slug: string) {
-  const a = cartId.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const b = slug.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!a || !b) return false;
-  if (b === "salesforce") return a.includes("salesforce") || a.includes("demandware");
-  if (b === "cscart") return a.includes("cscart") || a.includes("cscart");
-  return a.includes(b) || b.includes(a);
+export function isDemoApi2CartStore(url: string) {
+  try {
+    return new URL(url.includes("://") ? url : `https://${url}`).hostname.toLowerCase() === "demo.api2cart.com";
+  } catch {
+    return /demo\.api2cart\.com/i.test(url);
+  }
 }
 
-async function a2c(
-  method: string,
-  storeKey: string,
-  extra: Record<string, string> = {}
-): Promise<Record<string, unknown> | null> {
-  const key = apiKey();
-  if (!key || !storeKey) return null;
-  const u = new URL(`${API}/${method}`);
-  u.searchParams.set("api_key", key);
-  u.searchParams.set("store_key", storeKey);
-  for (const [k, v] of Object.entries(extra)) u.searchParams.set(k, v);
-  const res = await fetch(u);
-  return (await res.json()) as Record<string, unknown>;
+function storeUrlOf(account: AccountCart) {
+  return (account.url || account.store_url || "").replace(/\/$/, "");
+}
+
+function storeNameOf(account: AccountCart, url: string) {
+  const custom = account.store_name?.trim() || account.custom_label?.trim();
+  if (custom) return custom;
+
+  const slug = slugForCartId(account.cart_id || "");
+  const platformName = slug ? cartBySlug(slug)?.name : null;
+  const urlLabel = url ? storeUrlDisplay(url) : "";
+
+  if (platformName && urlLabel) return `${platformName} (${urlLabel})`;
+  if (urlLabel) return urlLabel;
+  return "Store";
+}
+
+function storeLabelOf(account: AccountCart, url: string) {
+  const slug = slugForCartId(account.cart_id || "");
+  const platformName = slug ? cartBySlug(slug)?.name : null;
+  const custom = account.store_name?.trim() || account.custom_label?.trim();
+  if (custom) return custom;
+  if (platformName && url) return `${platformName} (${storeUrlDisplay(url)})`;
+  return storeNameOf(account, url);
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return await Promise.race([
+    promise,
+    new Promise<T>((resolve) => {
+      setTimeout(() => resolve(fallback), ms);
+    })
+  ]);
 }
 
 async function listAccountCarts(): Promise<AccountCart[]> {
-  const key = apiKey();
-  if (!key) return [];
-  const u = new URL(`${API}/account.cart.list.json`);
-  u.searchParams.set("api_key", key);
+  if (!isA2CConfigured()) return [];
   try {
-    const res = await fetch(u);
-    const json = (await res.json()) as { result?: { carts?: AccountCart[] } };
-    return json.result?.carts ?? [];
+    const result = await a2cAccount<{ carts?: AccountCart[]; carts_count?: number }>(
+      "account.cart.list.json"
+    );
+    return result.carts ?? [];
   } catch {
     return [];
   }
 }
 
-export async function listConnectedStores(): Promise<{ url: string; name: string; cartId: string }[]> {
-  return (await listAccountCarts())
-    .map((c) => {
-      const url = (c.url || c.store_url || "").replace(/\/$/, "");
-      return {
-        url,
-        name: c.store_name || hostLabel(url),
-        cartId: c.cart_id || ""
-      };
-    })
-    .filter((c) => c.url);
+export { slugForCartId } from "./platforms.ts";
+
+export async function listConnectedStores(): Promise<ConnectedStore[]> {
+  return listConnectedStoresFromAccounts(await listAccountCarts());
 }
 
-type CatalogProduct = {
-  id?: string;
-  name?: string;
-  price?: number;
-  images?: Array<{ http_path?: string; url?: string; type?: string }>;
+function listConnectedStoresFromAccounts(accounts: AccountCart[]): ConnectedStore[] {
+  return accounts
+    .map((account) => {
+      const url = storeUrlOf(account);
+      const storeKey = account.store_key || "";
+      const cartId = account.cart_id || "";
+      if (!url || !storeKey || isDemoApi2CartStore(url)) return null;
+      return {
+        storeKey,
+        cartId,
+        slug: slugForCartId(cartId),
+        url,
+        name: storeNameOf(account, url),
+        label: storeLabelOf(account, url)
+      } satisfies ConnectedStore;
+    })
+    .filter((store): store is ConnectedStore => Boolean(store));
+}
+
+function urlsMatch(a: string, b: string) {
+  const left = normalizeStoreUrl(a).toLowerCase();
+  const right = normalizeStoreUrl(b).toLowerCase();
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const hostA = storeHost(left);
+  const hostB = storeHost(right);
+  return Boolean(hostA && hostA === hostB);
+}
+
+function findAccountForStore(accounts: AccountCart[], slug: CartSlug, storeUrl: string): AccountCart | null {
+  const matches = accounts.filter(
+    (account) =>
+      slugForCartId(account.cart_id || "") === slug && !isDemoApi2CartStore(storeUrlOf(account))
+  );
+  if (!storeUrl) return null;
+  return (
+    matches.find((account) => urlsMatch(storeUrlOf(account), storeUrl)) ||
+    matches.find((account) => storeHost(storeUrlOf(account)) === storeHost(storeUrl)) ||
+    null
+  );
+}
+
+function bridgeCartId(platform: PlatformDef) {
+  return platform.cartIds.find((id) => !/Api$/i.test(id)) || platform.cartIds[0];
+}
+
+async function addStoreViaBridge(platform: PlatformDef, storeUrl: string) {
+  const cartId = bridgeCartId(platform);
+  const bridge = await a2cAccount<{ store_key?: string; bridge?: string }>("cart.bridge.json");
+  const storeKey = bridge.store_key?.trim();
+  if (!storeKey) {
+    throw new A2CError(-1, "Could not start store authorization.");
+  }
+  const added = await a2cAccount<{ store_key?: string }>("account.cart.add.json", {
+    cart_id: cartId,
+    store_url: storeUrl,
+    store_key: storeKey
+  });
+  const connectedKey = added.store_key?.trim() || storeKey;
+  await a2cStore("cart.info.json", connectedKey);
+  return { storeKey: connectedKey, cartId };
+}
+
+type ConnectionResult = {
+  storeKey: string | null;
+  storeUrl: string;
+  storeName: string;
+  cartId: string;
+  cartSlug: CartSlug;
+  oauthUrl?: string;
+  error?: string;
 };
+
+async function connectMerchantStore(cartSlug: string, storeUrlRaw: string): Promise<ConnectionResult> {
+  const slug = cartSlug.trim().toLowerCase() as CartSlug;
+  const platform = platformForSlug(slug);
+  const storeUrl = normalizeStoreUrl(storeUrlRaw);
+  if (!platform) {
+    return {
+      storeKey: null,
+      storeUrl,
+      storeName: "",
+      cartId: "",
+      cartSlug: slug,
+      error: "Pick a cart platform."
+    };
+  }
+  if (!storeUrl) {
+    return {
+      storeKey: null,
+      storeUrl: "",
+      storeName: "",
+      cartId: "",
+      cartSlug: slug,
+      error: "Enter your store URL."
+    };
+  }
+
+  const accounts = await withTimeout(listAccountCarts(), 2500, []);
+  const match = findAccountForStore(accounts, slug, storeUrl);
+  if (match?.store_key) {
+    const url = storeUrlOf(match) || storeUrl;
+    return {
+      storeKey: match.store_key,
+      storeUrl: url,
+      storeName: storeNameOf(match, url),
+      cartId: match.cart_id || "",
+      cartSlug: slug
+    };
+  }
+
+  const oauthUrl = createAuthorizeUrl(slug, storeUrl);
+  if (oauthUrl) {
+    return {
+      storeKey: null,
+      storeUrl,
+      storeName: storeHost(storeUrl) || storeUrl,
+      cartId: "",
+      cartSlug: slug,
+      oauthUrl
+    };
+  }
+
+  if (slug === "shopify" || slug === "woocommerce") {
+    return {
+      storeKey: null,
+      storeUrl,
+      storeName: "",
+      cartId: "",
+      cartSlug: slug,
+      error: "Could not start store authorization."
+    };
+  }
+
+  try {
+    const added = await addStoreViaBridge(platform, storeUrl);
+    return {
+      storeKey: added.storeKey,
+      storeUrl,
+      storeName: storeNameOf({ cart_id: added.cartId }, storeUrl),
+      cartId: added.cartId,
+      cartSlug: slug
+    };
+  } catch {
+    return {
+      storeKey: null,
+      storeUrl,
+      storeName: "",
+      cartId: "",
+      cartSlug: slug,
+      error: "Could not connect that store."
+    };
+  }
+}
 
 function pickImage(
   images?: Array<{ http_path?: string; url?: string; src?: string; type?: string }>
@@ -115,125 +290,57 @@ function isRealImage(url: string) {
   return Boolean(url) && !/placeholder/i.test(url);
 }
 
-async function fetchJson(url: string, ms = 5000): Promise<unknown | null> {
-  try {
-    const res = await fetch(url, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(ms)
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-async function shopifyStorefrontProducts(storeUrl: string): Promise<CartItem[]> {
-  const json = (await fetchJson(`${storeUrl}/products.json?limit=8`)) as {
-    products?: Array<{
-      title?: string;
-      images?: Array<{ src?: string }>;
-      image?: { src?: string };
-      variants?: Array<{ price?: string }>;
-    }>;
-  } | null;
-  if (!json?.products?.length) return [];
-  return json.products
-    .map((p) => ({
-      name: p.title || "Item",
-      imageUrl: p.images?.[0]?.src || p.image?.src || "",
-      quantity: 1,
-      price: Number(p.variants?.[0]?.price || 0)
-    }))
-    .filter((i) => isRealImage(i.imageUrl))
-    .slice(0, 3);
-}
-
-async function wooStorefrontProducts(storeUrl: string): Promise<CartItem[]> {
-  const json = (await fetchJson(`${storeUrl}/wp-json/wc/store/v1/products?per_page=8`)) as Array<{
-    name?: string;
-    images?: Array<{ src?: string }>;
-    prices?: { price?: string; raw_prices?: { price?: number } };
-  }> | null;
-  if (!Array.isArray(json) || !json.length) return [];
-  return json
-    .map((p) => {
-      const cents = Number(p.prices?.raw_prices?.price ?? p.prices?.price ?? 0);
-      const price = cents > 1000 ? cents / 100 : cents;
-      return {
-        name: p.name || "Item",
-        imageUrl: p.images?.[0]?.src || "",
-        quantity: 1,
-        price
-      };
-    })
-    .filter((i) => isRealImage(i.imageUrl))
-    .slice(0, 3);
-}
-
-async function storefrontProducts(storeUrl: string): Promise<CartItem[]> {
-  const base = storeUrl.replace(/\/$/, "");
-  if (!base) return [];
-  const shopify = await shopifyStorefrontProducts(base);
-  if (shopify.length) return shopify;
-  return wooStorefrontProducts(base);
-}
-
 async function productImage(storeKey: string, productId: string): Promise<string> {
   if (!productId) return "/placeholder-item.svg";
-  const json = (await a2c("product.info.json", storeKey, {
-    id: productId,
-    params: "images"
-  })) as { result?: { images?: Array<{ http_path?: string; type?: string }> } } | null;
-  return pickImage(json?.result?.images) || "/placeholder-item.svg";
+  try {
+    const result = await a2cStore<{ images?: Array<{ http_path?: string; type?: string }> }>(
+      "product.info.json",
+      storeKey,
+      { id: productId, params: "images" }
+    );
+    return pickImage(result.images) || "/placeholder-item.svg";
+  } catch {
+    return "/placeholder-item.svg";
+  }
 }
 
 async function listCatalogProducts(storeKey: string): Promise<CartItem[]> {
-  const json = (await a2c("product.list.json", storeKey, {
-    count: "20",
-    params: "id,name,price,images"
-  })) as { result?: { product?: CatalogProduct[] } } | null;
-  const products = json?.result?.product ?? [];
-  const items: CartItem[] = [];
-  for (const p of products) {
-    let imageUrl = pickImage(p.images);
-    if (!isRealImage(imageUrl) && p.id) {
-      imageUrl = await productImage(storeKey, String(p.id));
-    }
-    if (!isRealImage(imageUrl)) continue;
-    items.push({
-      name: p.name || "Item",
-      imageUrl,
-      quantity: 1,
-      price: Number(p.price || 0)
+  try {
+    const result = await a2cStore<{
+      product?: Array<{
+        id?: string;
+        name?: string;
+        price?: number;
+        images?: Array<{ http_path?: string; url?: string; type?: string }>;
+      }>;
+    }>("product.list.json", storeKey, {
+      count: "20",
+      params: "id,name,price,images"
     });
-    if (items.length >= 3) break;
+
+    const products = result.product ?? [];
+    const items: CartItem[] = [];
+    for (const p of products) {
+      let imageUrl = pickImage(p.images);
+      if (!isRealImage(imageUrl) && p.id) {
+        imageUrl = await productImage(storeKey, String(p.id));
+      }
+      if (!isRealImage(imageUrl)) continue;
+      items.push({
+        name: p.name || "Item",
+        imageUrl,
+        quantity: 1,
+        price: money(Number(p.price || 0))
+      });
+      if (items.length >= 3) break;
+    }
+    return items;
+  } catch {
+    return [];
   }
-  return items;
 }
 
-async function loadShopProducts(storeKey: string | null, storeUrl: string): Promise<CartItem[]> {
-  if (storeKey) {
-    const catalog = await listCatalogProducts(storeKey);
-    if (catalog.length) return catalog;
-  }
-  return storefrontProducts(storeUrl);
-}
-
-function payloadFromItems(items: CartItem[], storeUrl: string): CartPayload {
-  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const cartPath = storeUrl ? `${storeUrl.replace(/\/$/, "")}/cart` : FIXTURE_PAYLOAD.basketUrl;
-  return {
-    customerName: "Customer",
-    email: "",
-    basketUrl: cartPath,
-    items: items.slice(0, 3),
-    subtotal,
-    itemCount: items.length
-  };
-}
-
-function orderDiscount(order: RawOrder) {
+function orderDiscount(order: RawAbandonedOrder) {
   const listed = Number(order.totals?.discount || 0);
   const onItems = (order.order_products ?? []).reduce(
     (sum, p) => sum + Number(p.discount_amount || 0),
@@ -242,106 +349,228 @@ function orderDiscount(order: RawOrder) {
   return Math.max(listed, onItems);
 }
 
-async function previewCartsForStore(storeKey: string | null, storeUrl: string): Promise<{
-  source: "api2cart" | "fixture";
-  storeKey: string | null;
-  carts: CartPayload[];
-}> {
-  const shopItems = await loadShopProducts(storeKey, storeUrl);
+async function mapOrderToPayload(
+  order: RawAbandonedOrder,
+  storeKey: string,
+  storeUrl: string,
+  platform: PlatformDef,
+  imageFallback: CartItem[]
+): Promise<CartPayload | null> {
+  const products = order.order_products ?? [];
+  if (!products.length) return null;
 
-  if (storeKey) {
-    const raw = (await a2c("order.abandoned.list.json", storeKey, {
-      count: "10",
-      params: "force_all"
-    })) as {
-      return_code?: number;
-      result?: { order?: RawOrder[] };
-    } | null;
-    const orders = raw?.result?.order;
-    if (orders?.length) {
-      const carts: CartPayload[] = [];
-      for (const order of orders) {
-        const existingDiscount = Math.round(orderDiscount(order) * 100) / 100;
-        const subtotal = Number(order.totals?.subtotal || order.totals?.total || 0);
-        if (
-          !shouldMailCart({
-            payload: { subtotal, existingDiscount },
-            minimum: DEFAULT_OFFER.minimum,
-            maxdiscount: DEFAULT_OFFER.maxdiscount
-          })
-        ) {
-          continue;
-        }
-        const products = order.order_products ?? [];
-        const items: CartItem[] = [];
-        for (const p of products.slice(0, 3)) {
-          const imageUrl = await productImage(storeKey, p.product_id || "");
-          items.push({
-            name: p.name || "Item",
-            imageUrl: isRealImage(imageUrl) ? imageUrl : shopItems[items.length]?.imageUrl || imageUrl,
-            quantity: p.quantity || 1,
-            price: Number(p.price || p.total_price || 0)
-          });
-        }
-        if (!items.length && shopItems.length) items.push(...shopItems.slice(0, 3));
-        const first = order.customer?.first_name || "";
-        const last = order.customer?.last_name || "";
-        carts.push({
-          customerName: `${first} ${last}`.trim() || "Customer",
-          email: order.customer?.email || "",
-          basketUrl: order.basket_url || (storeUrl ? `${storeUrl}/cart` : ""),
-          items,
-          subtotal,
-          itemCount: products.reduce((n, p) => n + (p.quantity || 1), 0) || items.length,
-          existingDiscount: existingDiscount || undefined
-        });
-      }
-      if (carts.length) return { source: "api2cart", storeKey, carts };
-    }
-  }
+  const existingDiscount = money(orderDiscount(order));
+  const subtotal = platform.orderSubtotal(order);
+  const lineItems = products.slice(0, 3);
 
-  if (shopItems.length) {
-    return { source: "api2cart", storeKey, carts: [payloadFromItems(shopItems, storeUrl)] };
-  }
+  const imageUrls = await Promise.all(
+    lineItems.map((p) => productImage(storeKey, p.product_id || ""))
+  );
 
-  return { source: "fixture", storeKey, carts: [FIXTURE_PAYLOAD] };
+  const items: CartItem[] = lineItems.map((p, index) => {
+    const imageUrl = imageUrls[index] || "/placeholder-item.svg";
+    return {
+      name: p.name || "Item",
+      imageUrl: isRealImage(imageUrl) ? imageUrl : imageFallback[index]?.imageUrl || imageUrl,
+      quantity: p.quantity || 1,
+      price: platform.linePrice(p, order)
+    };
+  });
+
+  if (!items.length) return null;
+
+  const first = order.customer?.first_name || "";
+  const last = order.customer?.last_name || "";
+  const abandonedAt = order.modified_at?.value || order.created_at?.value || new Date().toISOString();
+  return {
+    customerName: `${first} ${last}`.trim() || "Customer",
+    email: order.customer?.email || "",
+    basketUrl: platform.basketUrl(storeUrl, order),
+    items,
+    subtotal,
+    itemCount: products.reduce((n, p) => n + (p.quantity || 1), 0) || items.length,
+    existingDiscount: existingDiscount || undefined,
+    abandonedOrderId: order.id ? String(order.id) : undefined,
+    abandonedAt
+  };
 }
 
-export async function syncShoppingCart(cartSlug: string): Promise<{
-  source: "api2cart" | "fixture";
+export async function listAbandonedCartsForStore(
+  storeKey: string,
+  storeUrl: string,
+  platform: PlatformDef
+): Promise<{ candidates: AbandonedCartCandidate[]; error?: string }> {
+  if (!isA2CConfigured()) {
+    return { candidates: [], error: "Store sync is not configured." };
+  }
+
+  let orders: RawAbandonedOrder[] = [];
+  try {
+    const result = await a2cStore<{ order?: RawAbandonedOrder[] }>("order.abandoned.list.json", storeKey, {
+      count: "50",
+      params: "force_all"
+    });
+    orders = sortOrdersNewestFirst(result.order ?? []);
+  } catch (err) {
+    return {
+      candidates: [],
+      error: err instanceof A2CError ? err.message : "Could not load abandoned carts."
+    };
+  }
+
+  if (!orders.length) return { candidates: [] };
+
+  const imageFallback = await listCatalogProducts(storeKey);
+  const candidates: AbandonedCartCandidate[] = [];
+
+  for (const order of orders) {
+    const payload = await mapOrderToPayload(order, storeKey, storeUrl, platform, imageFallback);
+    if (!payload?.abandonedOrderId) continue;
+    candidates.push({
+      orderId: payload.abandonedOrderId,
+      abandonedAt: payload.abandonedAt || new Date().toISOString(),
+      payload
+    });
+  }
+
+  return { candidates };
+}
+
+async function newestAbandonedCart(
+  storeKey: string,
+  storeUrl: string,
+  platform: PlatformDef
+): Promise<StoreCartPull> {
+  const { candidates, error } = await listAbandonedCartsForStore(storeKey, storeUrl, platform);
+  if (error && !candidates.length) {
+    return { source: "none", storeKey, carts: [], error };
+  }
+  if (!candidates.length) {
+    return {
+      source: "none",
+      storeKey,
+      carts: [],
+      error: error || "No abandoned carts were found for this store."
+    };
+  }
+  return { source: "api2cart", storeKey, carts: [candidates[0].payload] };
+}
+
+export async function syncShoppingCart(
+  cartSlug: string,
+  storeUrlRaw = ""
+): Promise<
+  StoreCartPull & {
+    storeUrl: string;
+    storeName: string;
+    cartId: string;
+  }
+> {
+  const connection = await connectMerchantStore(cartSlug, storeUrlRaw);
+  if (connection.oauthUrl) {
+    return {
+      source: "none",
+      storeKey: null,
+      storeUrl: connection.storeUrl,
+      storeName: connection.storeName,
+      cartId: "",
+      carts: [],
+      oauthUrl: connection.oauthUrl
+    };
+  }
+  if (!connection.storeKey) {
+    return {
+      source: "none",
+      storeKey: null,
+      storeUrl: connection.storeUrl,
+      storeName: connection.storeName,
+      cartId: "",
+      carts: [],
+      error: connection.error || "Could not connect that store."
+    };
+  }
+
+  const platform = platformForCartId(connection.cartId) || platformForSlug(connection.cartSlug);
+  if (!platform) {
+    return {
+      source: "none",
+      storeKey: connection.storeKey,
+      storeUrl: connection.storeUrl,
+      storeName: connection.storeName,
+      cartId: connection.cartId,
+      carts: [],
+      error: "That cart platform isn't supported yet."
+    };
+  }
+
+  const pulled = await newestAbandonedCart(connection.storeKey, connection.storeUrl, platform);
+  return {
+    ...pulled,
+    storeUrl: connection.storeUrl,
+    storeName: connection.storeName,
+    cartId: connection.cartId
+  };
+}
+
+export async function resolveShoppingCartConnection(
+  cartSlug: string,
+  storeUrlRaw = ""
+): Promise<{
   storeKey: string | null;
   storeUrl: string;
   storeName: string;
-  carts: CartPayload[];
+  cartId: string;
+  cartSlug: CartSlug;
+  oauthUrl?: string;
+  error?: string;
 }> {
-  const accounts = await listAccountCarts();
-  const slug = cartSlug.trim().toLowerCase();
-  const match =
-    accounts.find((c) => cartSlugMatches(c.cart_id || "", slug)) || accounts[0];
-  const storeUrl = (match?.url || match?.store_url || "").replace(/\/$/, "");
-  const storeName = match?.store_name || (storeUrl ? hostLabel(storeUrl) : "");
-  const pulled = await previewCartsForStore(match?.store_key || null, storeUrl);
-  return {
-    ...pulled,
-    storeUrl,
-    storeName
-  };
+  return connectMerchantStore(cartSlug, storeUrlRaw);
 }
 
 export async function listAbandonedPayloads(storeUrl = "") {
   const accounts = await listAccountCarts();
   const want = storeUrl.replace(/\/$/, "").toLowerCase();
+
   const match = want
-    ? accounts.find((c) => (c.url || c.store_url || "").replace(/\/$/, "").toLowerCase() === want) ||
-      accounts.find((c) => (c.url || c.store_url || "").toLowerCase().includes(want))
+    ? accounts.find((c) => storeUrlOf(c).toLowerCase() === want) ||
+      accounts.find((c) => storeUrlOf(c).toLowerCase().includes(want))
     : accounts[0];
-  const url = (match?.url || match?.store_url || storeUrl || "").replace(/\/$/, "");
-  return previewCartsForStore(match?.store_key || null, url);
+
+  if (!match?.store_key) {
+    return {
+      source: "none" as const,
+      storeKey: null,
+      carts: [] as CartPayload[],
+      error: want ? "No connected store matched that URL." : "No connected stores found."
+    };
+  }
+
+  const url = storeUrlOf(match) || storeUrl.replace(/\/$/, "");
+  const platform = platformForCartId(match.cart_id || "");
+  if (!platform) {
+    return {
+      source: "none" as const,
+      storeKey: match.store_key,
+      carts: [] as CartPayload[],
+      error: "Connected store uses an unsupported cart platform."
+    };
+  }
+
+  return newestAbandonedCart(match.store_key, url, platform);
 }
 
 export async function pingStore() {
-  return {
-    configured: Boolean(apiKey()),
-    stores: await listConnectedStores()
-  };
+  const configured = isA2CConfigured();
+  let stores: ConnectedStore[] = [];
+  let error: string | undefined;
+
+  if (configured) {
+    try {
+      stores = await listConnectedStores();
+    } catch (err) {
+      error = err instanceof A2CError ? err.message : "Could not list connected stores.";
+    }
+  }
+
+  return { configured, stores, error };
 }

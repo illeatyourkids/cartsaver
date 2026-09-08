@@ -10,6 +10,10 @@ export function SiteFooter() {
     <footer className="site-footer">
       <div className="site-footer-inner">
         <p className="site-footer-powered">
+          <a className="site-footer-brand" href="https://cartmailer.com">
+            Cart Mailer
+          </a>
+          <span aria-hidden>·</span>
           Powered by{" "}
           <a
             className="site-footer-thanks"

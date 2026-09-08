@@ -1,37 +1,13 @@
 import { randomBytes } from "node:crypto";
+import {
+  cartEligibilityError,
+  money,
+  shouldMailCart
+} from "../src/lib/cartEligibility.ts";
 import type { CartRecord, CartSaveInput } from "../src/types/cart.ts";
 import { putCart } from "./store.ts";
 
-function money(n: number) {
-  return Math.round(n * 100) / 100;
-}
-
-/** Dollars already off this leftover cart. */
-export function cartDiscount(payload: { existingDiscount?: number }) {
-  return money(payload.existingDiscount || 0);
-}
-
-export function existingDiscountPercent(payload: {
-  subtotal: number;
-  existingDiscount?: number;
-}) {
-  const original = money(payload.subtotal);
-  if (original <= 0) return 0;
-  return (cartDiscount(payload) / original) * 100;
-}
-
-export function shouldMailCart(input: {
-  payload: { subtotal: number; existingDiscount?: number };
-  minimum: number;
-  maxdiscount: number;
-}) {
-  const original = money(input.payload.subtotal);
-  if (original < (Number(input.minimum) || 0)) return false;
-  const already = existingDiscountPercent(input.payload);
-  const maxPct = Number(input.maxdiscount) || 0;
-  if (maxPct > 0 && already >= maxPct) return false;
-  return true;
-}
+export { cartEligibilityError, shouldMailCart } from "../src/lib/cartEligibility.ts";
 
 export function pricedOffer(input: CartSaveInput) {
   const original = money(input.payload.subtotal);
@@ -40,6 +16,10 @@ export function pricedOffer(input: CartSaveInput) {
   }
   const savings = money(original * (input.discount / 100));
   return { originalPrice: original, salePrice: money(Math.max(0, original - savings)) };
+}
+
+export function validateCartSave(input: CartSaveInput) {
+  return cartEligibilityError(input);
 }
 
 export function cartsave(input: CartSaveInput): CartRecord {

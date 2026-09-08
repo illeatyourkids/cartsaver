@@ -32,7 +32,7 @@ export function CartFront({
           <div className="cart-front__thumbs">
             {items.map((item, i) => (
               <div key={`${item.name}-${i}`} className="cart-thumb">
-                {item.imageUrl ? <img src={item.imageUrl} alt="" /> : null}
+                {item.imageUrl ? <img src={item.imageUrl} alt="" className="cart-thumb__img" /> : null}
               </div>
             ))}
           </div>

@@ -17,3 +17,7 @@ export type CartSlug = (typeof SUPPORTED_CARTS)[number]["slug"];
 export function cartLogoSrc(file: string) {
   return `/cart-logos/${file}`;
 }
+
+export function cartBySlug(slug: string) {
+  return SUPPORTED_CARTS.find((cart) => cart.slug === slug) ?? null;
+}

@@ -13,6 +13,9 @@ export type CartPayload = {
   subtotal: number;
   itemCount: number;
   existingDiscount?: number;
+  /** Api2Cart abandoned order id, used for cron dedup */
+  abandonedOrderId?: string;
+  abandonedAt?: string;
 };
 
 export type OfferFields = {
@@ -23,6 +26,8 @@ export type OfferFields = {
   maxdiscount: number;
   logourl: string;
   brandColor?: string;
+  /** Thanks.io user bearer token, passed on launch to activate hourly cron */
+  thanksToken?: string;
 };
 
 export type CartRecord = OfferFields & {
